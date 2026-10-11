@@ -2,6 +2,7 @@ import { redirect } from "next/navigation"
 import { Suspense } from "react"
 import { signOut } from "@/app/actions"
 import { getCurrentUser } from "@/lib/auth"
+import { Summarizer } from "./summarizer"
 
 export const metadata = {
   title: "Dashboard · AI Study Summarizer",
@@ -21,12 +22,7 @@ export default function DashboardPage() {
           <Greeting />
         </Suspense>
 
-        <section className="mt-12 rounded-xl border border-dashed border-zinc-200 p-10 text-center dark:border-zinc-800">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Your summarizer goes here — upload a PDF and it will appear in this
-            space.
-          </p>
-        </section>
+        <Summarizer />
       </main>
     </div>
   )
