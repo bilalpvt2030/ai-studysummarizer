@@ -5,6 +5,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/**
+ * Only allow same-origin paths as a post-login destination. `//host` and
+ * `/\host` resolve to another origin, so they fall back to the dashboard.
+ */
+export function safeNextPath(next: string | null | undefined): string {
+  if (!next || !next.startsWith("/")) return "/dashboard"
+  if (next.startsWith("//") || next.startsWith("/\\")) return "/dashboard"
+  return next
+}
+
 export function formatBytes(bytes: number, decimals = 2): string {
   if (bytes === 0) return "0 Bytes"
 

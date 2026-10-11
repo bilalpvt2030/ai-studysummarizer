@@ -45,3 +45,11 @@ Thumbs.db
 # Supabase
 supabase/.branches/
 supabase/.temp/
+
+# Cloudflare / OpenNext
+.open-next/
+.wrangler/
+.dev.vars
+
+# TypeScript
+*.tsbuildinfo
