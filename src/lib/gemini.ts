@@ -158,7 +158,8 @@ async function generateSummary(
   apiKey: string,
   signal: AbortSignal
 ): Promise<StudySummary> {
-  const response = await fetch(`${API_BASE}/v1beta/models/${model}:generateContent`, {
+  const url = `${API_BASE}/v1beta/models/${model}:generateContent`
+  const init: RequestInit = {
     method: "POST",
     headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -175,10 +176,19 @@ async function generateSummary(
       generationConfig: {
         responseMimeType: "application/json",
         responseSchema: RESPONSE_SCHEMA,
+        // Summarizing doesn't need long reasoning; "low" answers several times faster.
+        thinkingConfig: { thinkingLevel: "low" },
       },
     }),
     signal,
-  })
+  }
+
+  // Gemini returns 503 during demand spikes; these usually clear within seconds.
+  let response = await fetch(url, init)
+  if (response.status === 503) {
+    await new Promise((resolve) => setTimeout(resolve, 2_000))
+    response = await fetch(url, init)
+  }
   if (!response.ok) throw await apiError("generateContent", response)
 
   const data = (await response.json()) as GenerateResponse
@@ -231,7 +241,9 @@ async function apiError(step: string, response: Response): Promise<SummarizeErro
   const body = (await response.text().catch(() => "")).slice(0, 500)
   const detail = `Gemini ${step} failed with ${response.status}: ${body}`
 
-  if (response.status === 429) return new SummarizeError("rate_limited", detail)
+  if (response.status === 429 || response.status === 503) {
+    return new SummarizeError("rate_limited", detail)
+  }
   // A bad key comes back as 400 INVALID_ARGUMENT, not 401.
   if ([401, 403, 404].includes(response.status) || /api key/i.test(body)) {
     return new SummarizeError("not_configured", detail)
