@@ -1,17 +1,27 @@
 import type { StudySummary } from "./summary"
 
 const API_BASE = "https://generativelanguage.googleapis.com"
-// Tried in order. The newest model is the one most often overloaded (503) or
-// out of free-tier quota (429, counted per model), so older ones back it up.
-const MODELS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
+// Tried in order, best first. The free tier allows only 20 requests a day per
+// model, and the newest model is also the one most often overloaded (503), so
+// the rest of the list is what keeps summaries working once it runs out.
+const MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+]
 const TIMEOUT_MS = 100_000
-// A model that accepts the request and then stalls would otherwise use up the
-// whole budget; give each one this long before moving to the next.
-const ATTEMPT_TIMEOUT_MS = 40_000
+// A model that accepts the request and then goes silent would otherwise use up
+// the whole budget. The answer is streamed, so silence for this long (before
+// the first chunk or between chunks) means stalled rather than slow.
+const STALL_MS = 25_000
 
 export type SummarizeFailure =
   | "not_configured"
   | "rate_limited"
+  | "quota_exhausted"
   | "unreadable"
   | "blocked"
   | "timeout"
@@ -155,6 +165,7 @@ async function uploadPdf(pdf: ArrayBuffer, apiKey: string, signal: AbortSignal) 
 }
 
 type GenerateResponse = {
+  error?: { code?: number; message?: string }
   promptFeedback?: { blockReason?: string }
   candidates?: {
     finishReason?: string
@@ -168,26 +179,31 @@ async function generateWithFallback(
   apiKey: string,
   signal: AbortSignal
 ): Promise<StudySummary> {
-  let busy: SummarizeError | undefined
+  const skipped: string[] = []
+  let outOfQuota = 0
 
   for (const model of models) {
-    const attempt = AbortSignal.any([signal, AbortSignal.timeout(ATTEMPT_TIMEOUT_MS)])
     try {
-      return await generateSummary(fileUri, model, apiKey, attempt)
+      return await generateSummary(fileUri, model, apiKey, signal)
     } catch (e) {
-      // Only a busy or stalled model is worth swapping out; any other failure
-      // would repeat on the next one.
+      // Only a model that is busy, stalled or out of quota is worth swapping
+      // out; any other failure would repeat on the next one.
       const stalled = isTimeout(e) && !signal.aborted
-      const unavailable = e instanceof SummarizeError && e.reason === "rate_limited"
-      if (!stalled && !unavailable) throw e
+      const reason = e instanceof SummarizeError ? e.reason : undefined
+      if (!stalled && reason !== "rate_limited" && reason !== "quota_exhausted") throw e
 
-      console.warn(`[gemini] ${model} ${stalled ? "stalled" : "unavailable"}, trying the next model`)
-      busy = unavailable
-        ? e
-        : new SummarizeError("rate_limited", `${model} gave no answer within ${ATTEMPT_TIMEOUT_MS / 1000}s`)
+      if (reason === "quota_exhausted") outOfQuota++
+      const why = stalled ? "stalled" : reason === "quota_exhausted" ? "out of quota" : "busy"
+      skipped.push(`${model} ${why}`)
+      console.warn(`[gemini] ${model} ${why}, trying the next model`)
     }
   }
-  throw busy ?? new SummarizeError("failed", "No Gemini model configured")
+
+  // "Try again in a minute" is only true if at least one model was merely busy.
+  throw new SummarizeError(
+    models.length > 0 && outOfQuota === models.length ? "quota_exhausted" : "rate_limited",
+    `No model available: ${skipped.join(", ")}`
+  )
 }
 
 async function generateSummary(
@@ -196,45 +212,65 @@ async function generateSummary(
   apiKey: string,
   signal: AbortSignal
 ): Promise<StudySummary> {
-  const url = `${API_BASE}/v1beta/models/${model}:generateContent`
-  const init = {
-    method: "POST",
-    headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { file_data: { mime_type: "application/pdf", file_uri: fileUri } },
-            { text: "Write revision notes for this document." },
+  // Aborts the attempt when the stream goes quiet; `touch` resets the clock.
+  const stall = new AbortController()
+  const stalled = () => stall.abort(Object.assign(new Error(`${model} stalled`), { name: "TimeoutError" }))
+  let timer = setTimeout(stalled, STALL_MS)
+  const touch = () => {
+    clearTimeout(timer)
+    timer = setTimeout(stalled, STALL_MS)
+  }
+
+  let text = ""
+  let finishReason = "none"
+  try {
+    const response = await fetch(
+      `${API_BASE}/v1beta/models/${model}:streamGenerateContent?alt=sse`,
+      {
+        method: "POST",
+        headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { file_data: { mime_type: "application/pdf", file_uri: fileUri } },
+                { text: "Write revision notes for this document." },
+              ],
+            },
           ],
-        },
-      ],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: RESPONSE_SCHEMA,
-        // Summarizing doesn't need long reasoning; "low" answers several times faster.
-        thinkingConfig: { thinkingLevel: "low" },
-      },
-    }),
-    signal,
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: RESPONSE_SCHEMA,
+            // Summarizing doesn't need long reasoning; "low" answers several times faster.
+            thinkingConfig: { thinkingLevel: "low" },
+          },
+        }),
+        signal: AbortSignal.any([signal, stall.signal]),
+      }
+    )
+    if (!response.ok || !response.body) throw await apiError("generateContent", response)
+
+    for await (const chunk of readEvents(response.body, touch)) {
+      if (chunk.error) {
+        throw new SummarizeError(
+          chunk.error.code === 429 || chunk.error.code === 503 ? "rate_limited" : "failed",
+          `Gemini stream error ${chunk.error.code}: ${chunk.error.message}`
+        )
+      }
+      if (chunk.promptFeedback?.blockReason) {
+        throw new SummarizeError("blocked", `Prompt blocked: ${chunk.promptFeedback.blockReason}`)
+      }
+      const candidate = chunk.candidates?.[0]
+      if (candidate?.finishReason) finishReason = candidate.finishReason
+      for (const part of candidate?.content?.parts ?? []) {
+        if (!part.thought && typeof part.text === "string") text += part.text
+      }
+    }
+  } finally {
+    clearTimeout(timer)
   }
-
-  const response = await fetch(url, init)
-  if (!response.ok) throw await apiError("generateContent", response)
-
-  const data = (await response.json()) as GenerateResponse
-  if (data.promptFeedback?.blockReason) {
-    throw new SummarizeError("blocked", `Prompt blocked: ${data.promptFeedback.blockReason}`)
-  }
-
-  const candidate = data.candidates?.[0]
-  const finishReason = candidate?.finishReason ?? "none"
-  const text = (candidate?.content?.parts ?? [])
-    .filter((part) => !part.thought && typeof part.text === "string")
-    .map((part) => part.text)
-    .join("")
 
   if (!text) {
     const blocked = ["SAFETY", "RECITATION", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII"]
@@ -258,6 +294,32 @@ async function generateSummary(
   return summary
 }
 
+/** Yields each `data:` payload of a server-sent event stream as parsed JSON. */
+async function* readEvents(
+  body: ReadableStream<Uint8Array>,
+  onChunk: () => void
+): AsyncGenerator<GenerateResponse> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    onChunk()
+    buffer += decoder.decode(value, { stream: true })
+
+    let newline: number
+    while ((newline = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, newline).trim()
+      buffer = buffer.slice(newline + 1)
+      if (line.startsWith("data:")) yield JSON.parse(line.slice(5)) as GenerateResponse
+    }
+  }
+  const rest = buffer.trim()
+  if (rest.startsWith("data:")) yield JSON.parse(rest.slice(5)) as GenerateResponse
+}
+
 async function deleteFile(name: string, apiKey: string) {
   try {
     await fetch(`${API_BASE}/v1beta/${name}`, {
@@ -271,10 +333,14 @@ async function deleteFile(name: string, apiKey: string) {
 }
 
 async function apiError(step: string, response: Response): Promise<SummarizeError> {
-  const body = (await response.text().catch(() => "")).slice(0, 500)
-  const detail = `Gemini ${step} failed with ${response.status}: ${body}`
+  const body = await response.text().catch(() => "")
+  const detail = `Gemini ${step} failed with ${response.status}: ${body.slice(0, 500)}`
 
-  if (response.status === 429 || response.status === 503) {
+  if (response.status === 429) {
+    return new SummarizeError(retryAfterSeconds(body) > 300 ? "quota_exhausted" : "rate_limited", detail)
+  }
+  // 404 on generateContent is a retired model, which the next one can cover.
+  if (response.status === 503 || (response.status === 404 && step === "generateContent")) {
     return new SummarizeError("rate_limited", detail)
   }
   // A bad key comes back as 400 INVALID_ARGUMENT, not 401.
@@ -283,6 +349,16 @@ async function apiError(step: string, response: Response): Promise<SummarizeErro
   }
   if (response.status === 400) return new SummarizeError("unreadable", detail)
   return new SummarizeError("failed", detail)
+}
+
+/**
+ * How long a 429 says to wait ("Please retry in 12h28m56.5s"). Per-minute
+ * limits clear in seconds; a wait of hours means the daily quota is gone.
+ */
+function retryAfterSeconds(body: string): number {
+  const match = body.match(/retry in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?/i)
+  if (!match) return 0
+  return Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0)
 }
 
 /** The schema is enforced by Gemini, but don't let a malformed reply crash the UI. */

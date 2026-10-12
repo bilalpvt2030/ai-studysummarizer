@@ -16,6 +16,10 @@ const FAILURES: Record<SummarizeFailure, { status: number; message: string }> = 
     status: 429,
     message: "The summarizer is busy right now. Please try again in a minute.",
   },
+  quota_exhausted: {
+    status: 429,
+    message: "Today's summary limit has been reached. Please try again tomorrow.",
+  },
   unreadable: {
     status: 422,
     message: "We couldn't read that PDF. It may be damaged, password-protected or empty.",
