@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { redirect } from "next/navigation"
 import { Suspense } from "react"
 import { signOut } from "@/app/actions"
@@ -62,6 +63,13 @@ async function Header() {
               {user.name}
             </span>
           </div>
+
+          <Link
+            href="/account"
+            className="text-sm text-zinc-500 underline-offset-4 transition hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-50"
+          >
+            Account
+          </Link>
 
           <form action={signOut}>
             <button

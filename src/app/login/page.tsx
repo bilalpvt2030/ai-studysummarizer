@@ -1,5 +1,5 @@
-import Link from "next/link"
 import { Suspense } from "react"
+import { AuthShell } from "@/components/auth-shell"
 import { SetupNotice } from "@/components/setup-notice"
 import { isSupabaseConfigured } from "@/lib/supabase/config"
 import { LoginForm } from "./login-form"
@@ -10,14 +10,7 @@ export const metadata = {
 
 export default function LoginPage() {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
-      <Link
-        href="/"
-        className="mb-12 text-sm font-medium tracking-tight text-zinc-900 dark:text-zinc-50"
-      >
-        AI Study Summarizer
-      </Link>
-
+    <AuthShell>
       {isSupabaseConfigured ? (
         <Suspense fallback={<FormSkeleton />}>
           <LoginForm />
@@ -25,7 +18,7 @@ export default function LoginPage() {
       ) : (
         <SetupNotice />
       )}
-    </div>
+    </AuthShell>
   )
 }
 

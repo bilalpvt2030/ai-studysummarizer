@@ -6,7 +6,7 @@ import {
   supabaseUrl,
 } from "@/lib/supabase/config"
 
-const PROTECTED_PREFIXES = ["/dashboard"]
+const PROTECTED_PREFIXES = ["/dashboard", "/account", "/reset-password"]
 
 /**
  * Next.js 16 renamed `middleware.ts` to `proxy.ts`.

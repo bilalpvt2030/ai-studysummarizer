@@ -49,3 +49,19 @@ export async function renameSummary(id: string, title: string): Promise<ActionRe
   }
   return { ok: true }
 }
+
+/** Deletes the caller's account, with their summaries, then signs them out. */
+export async function deleteAccount(): Promise<ActionResult> {
+  if (!(await getCurrentUser())) return NOT_SIGNED_IN
+
+  const supabase = await createClient()
+  const { error } = await supabase.rpc("delete_own_account")
+  if (error) {
+    console.error(`[actions] delete account failed: ${error.message}`)
+    return { ok: false, error: "Couldn't delete your account. Please try again." }
+  }
+
+  // The user no longer exists, so only the cookies on this device are left.
+  await supabase.auth.signOut({ scope: "local" })
+  redirect("/login?notice=deleted")
+}

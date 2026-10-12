@@ -16,6 +16,10 @@ export async function GET(request: NextRequest) {
   // raw reason goes to the server log, not to the user.
   const fail = (code: "cancelled" | "failed", detail: string) => {
     console.error(`[auth/callback] ${code}: ${detail}`)
+    // A reset link that can't be used goes back to where a new one is requested.
+    if (safeNext === "/reset-password") {
+      return NextResponse.redirect(`${origin}/forgot-password?error=link`)
+    }
     return NextResponse.redirect(`${origin}/login?error=${code}`)
   }
 

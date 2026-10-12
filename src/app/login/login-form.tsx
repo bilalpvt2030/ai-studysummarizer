@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useState } from "react"
 import { GoogleIcon } from "@/components/google-button"
@@ -13,6 +14,11 @@ type Mode = "signin" | "signup"
 const CALLBACK_ERRORS: Record<string, string> = {
   cancelled: "Sign-in was cancelled.",
   failed: "We couldn't sign you in. Please try again.",
+}
+
+// Same idea for ?notice=.
+const NOTICES: Record<string, string> = {
+  deleted: "Your account and saved summaries have been deleted.",
 }
 
 export function LoginForm() {
@@ -29,7 +35,9 @@ export function LoginForm() {
   const [error, setError] = useState<string | null>(
     errorCode ? (CALLBACK_ERRORS[errorCode] ?? CALLBACK_ERRORS.failed) : null
   )
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(
+    NOTICES[searchParams.get("notice") ?? ""] ?? null
+  )
 
   async function handleGoogle() {
     setError(null)
@@ -195,6 +203,17 @@ export function LoginForm() {
         </button>
       </form>
 
+      {mode === "signin" && (
+        <p className="mt-4 text-center text-sm">
+          <Link
+            href="/forgot-password"
+            className="text-zinc-500 underline-offset-4 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-50"
+          >
+            Forgot your password?
+          </Link>
+        </p>
+      )}
+
       <p className="mt-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
         {mode === "signin" ? "No account yet?" : "Already have an account?"}{" "}
         <button
@@ -208,6 +227,18 @@ export function LoginForm() {
         >
           {mode === "signin" ? "Sign up" : "Sign in"}
         </button>
+      </p>
+
+      <p className="mt-6 text-center text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+        By continuing you agree to the{" "}
+        <Link href="/terms" className="underline underline-offset-4">
+          Terms
+        </Link>{" "}
+        and{" "}
+        <Link href="/privacy" className="underline underline-offset-4">
+          Privacy Policy
+        </Link>
+        .
       </p>
     </div>
   )
