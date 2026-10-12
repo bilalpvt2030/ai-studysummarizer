@@ -52,6 +52,8 @@ async function Header() {
                 alt=""
                 width={28}
                 height={28}
+                // Google's avatar host rejects some requests that carry a referrer.
+                referrerPolicy="no-referrer"
                 className="h-7 w-7 rounded-full object-cover"
               />
             ) : (

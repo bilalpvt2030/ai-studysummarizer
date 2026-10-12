@@ -24,3 +24,71 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }
+
+/* Printing a summary ("Print or save as PDF"): hide the app and show only the
+   print-ready copy of the summary. */
+@media print {
+  body {
+    background: #fff;
+    color: #000;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+
+  .print-area {
+    display: block !important;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    color: #000;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+
+  .print-area h1 {
+    font-size: 20pt;
+    font-weight: 600;
+    margin-bottom: 8pt;
+  }
+
+  .print-area h2 {
+    font-size: 13pt;
+    font-weight: 600;
+    margin: 16pt 0 6pt;
+  }
+
+  .print-area p {
+    margin-bottom: 6pt;
+  }
+
+  .print-area ul,
+  .print-area ol {
+    padding-left: 18pt;
+    margin-bottom: 6pt;
+  }
+
+  .print-area ul {
+    list-style: disc;
+  }
+
+  .print-area ol {
+    list-style: decimal;
+  }
+
+  .print-area ol[type="A"] {
+    list-style: upper-alpha;
+  }
+
+  .print-area li {
+    margin-bottom: 4pt;
+  }
+}
+

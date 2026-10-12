@@ -1,11 +1,25 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { getCurrentUser } from "@/lib/auth"
-import { SummarizeError, summarizePdf, type SummarizeFailure } from "@/lib/gemini"
+import {
+  SummarizeError,
+  summarize,
+  type SummarizeFailure,
+  type SummarySource,
+} from "@/lib/gemini"
 import { getUsage, recordUsage, saveSummary } from "@/lib/summaries"
-import { DAILY_SUMMARY_LIMIT, MAX_PDF_BYTES } from "@/lib/summary"
+import {
+  DAILY_SUMMARY_LIMIT,
+  DETAIL_LEVELS,
+  FILE_TYPES,
+  MAX_FILE_BYTES,
+  MAX_TEXT_CHARS,
+  MIN_TEXT_CHARS,
+  type DetailLevel,
+} from "@/lib/summary"
 import { formatBytes } from "@/lib/utils"
 
-const TOO_LARGE = `That file is too large. PDFs can be up to ${formatBytes(MAX_PDF_BYTES, 0)}.`
+const TOO_LARGE = `That file is too large. Files can be up to ${formatBytes(MAX_FILE_BYTES, 0)}.`
+const WRONG_TYPE = "Please upload a PDF or an image (PNG, JPG or WebP)."
 
 // The user sees one of these; the provider's raw reason goes to the server log.
 const FAILURES: Record<SummarizeFailure, { status: number; message: string }> = {
@@ -23,7 +37,7 @@ const FAILURES: Record<SummarizeFailure, { status: number; message: string }> = 
   },
   unreadable: {
     status: 422,
-    message: "We couldn't read that PDF. It may be damaged, password-protected or empty.",
+    message: "We couldn't read that document. It may be damaged, password-protected or empty.",
   },
   blocked: {
     status: 422,
@@ -31,7 +45,7 @@ const FAILURES: Record<SummarizeFailure, { status: number; message: string }> = 
   },
   timeout: {
     status: 504,
-    message: "That took too long. Try again, or use a shorter PDF.",
+    message: "That took too long. Try again, or use a shorter document.",
   },
   failed: {
     status: 502,
@@ -43,17 +57,19 @@ const fail = (status: number, message: string) =>
   NextResponse.json({ error: message }, { status })
 
 /**
- * Takes a PDF as the raw request body, summarizes it and saves the result to
- * the user's history. Signed-in users only — every call spends Gemini quota.
+ * Takes a document as the raw request body (a PDF, an image, or plain text),
+ * summarizes it and saves the result to the user's history. Signed-in users
+ * only — every call spends Gemini quota.
  */
 export async function POST(request: NextRequest) {
   const user = await getCurrentUser()
   if (!user) return fail(401, "Your session has expired. Please sign in again.")
 
-  if (!request.headers.get("content-type")?.startsWith("application/pdf")) {
-    return fail(415, "Please upload a PDF file.")
-  }
-  if (Number(request.headers.get("content-length")) > MAX_PDF_BYTES) {
+  const contentType = (request.headers.get("content-type") ?? "").split(";")[0].trim()
+  const isText = contentType === "text/plain"
+  if (!isText && !FILE_TYPES.some((type) => type === contentType)) return fail(415, WRONG_TYPE)
+
+  if (Number(request.headers.get("content-length")) > MAX_FILE_BYTES) {
     return fail(413, TOO_LARGE)
   }
 
@@ -65,16 +81,36 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const pdf = await request.arrayBuffer()
-  if (pdf.byteLength > MAX_PDF_BYTES) return fail(413, TOO_LARGE)
-  if (!looksLikePdf(pdf)) return fail(415, "That file doesn't look like a PDF.")
+  const body = await request.arrayBuffer()
+  if (body.byteLength > MAX_FILE_BYTES) return fail(413, TOO_LARGE)
+
+  let source: SummarySource
+  if (isText) {
+    const text = new TextDecoder().decode(body).trim()
+    if (text.length < MIN_TEXT_CHARS) {
+      return fail(422, `Please paste at least ${MIN_TEXT_CHARS} characters of text.`)
+    }
+    if (text.length > MAX_TEXT_CHARS) {
+      return fail(
+        413,
+        `That text is too long. Paste up to ${MAX_TEXT_CHARS.toLocaleString("en-US")} characters.`
+      )
+    }
+    source = { kind: "text", text }
+  } else {
+    // Trust the bytes, not the header the browser sent.
+    if (detectFileType(body) !== contentType) {
+      return fail(415, "That file doesn't match its type. Please upload a PDF or an image.")
+    }
+    source = { kind: "file", bytes: body, mimeType: contentType }
+  }
 
   try {
-    const summary = await summarizePdf(pdf)
+    const summary = await summarize(source, detailFrom(request))
 
     // Only a summary that was actually produced counts against the limit.
     await recordUsage()
-    const saved = await saveSummary(fileNameFrom(request), summary)
+    const saved = await saveSummary(fileNameFrom(request, isText), summary)
 
     return NextResponse.json({
       summary,
@@ -94,8 +130,15 @@ export async function POST(request: NextRequest) {
   }
 }
 
+function detailFrom(request: NextRequest): DetailLevel {
+  const value = request.headers.get("x-detail")
+  return DETAIL_LEVELS.find((level) => level === value) ?? "standard"
+}
+
 /** The browser sends the name URL-encoded in a header; it is only a label. */
-function fileNameFrom(request: NextRequest): string {
+function fileNameFrom(request: NextRequest, isText: boolean): string {
+  if (isText) return "Pasted text"
+
   let name = request.headers.get("x-file-name") ?? ""
   try {
     name = decodeURIComponent(name)
@@ -107,15 +150,25 @@ function fileNameFrom(request: NextRequest): string {
     .replace(/[\u0000-\u001f\u007f]/g, "")
     .trim()
     .slice(0, 255)
-  return name || "document.pdf"
+  return name || "document"
 }
 
-/** PDF readers accept the `%PDF-` marker anywhere in the first 1024 bytes. */
-function looksLikePdf(file: ArrayBuffer): boolean {
-  const marker = [0x25, 0x50, 0x44, 0x46, 0x2d] // %PDF-
+/** Identify a supported file by its leading bytes. */
+function detectFileType(file: ArrayBuffer): (typeof FILE_TYPES)[number] | null {
   const head = new Uint8Array(file.slice(0, 1024))
-  for (let i = 0; i + marker.length <= head.length; i++) {
-    if (marker.every((byte, j) => head[i + j] === byte)) return true
+  const startsWith = (bytes: number[], offset = 0) =>
+    bytes.every((byte, i) => head[offset + i] === byte)
+
+  if (startsWith([0x89, 0x50, 0x4e, 0x47])) return "image/png"
+  if (startsWith([0xff, 0xd8, 0xff])) return "image/jpeg"
+  // RIFF....WEBP
+  if (startsWith([0x52, 0x49, 0x46, 0x46]) && startsWith([0x57, 0x45, 0x42, 0x50], 8)) {
+    return "image/webp"
   }
-  return false
+  // PDF readers accept the `%PDF-` marker anywhere in the first 1024 bytes.
+  const marker = [0x25, 0x50, 0x44, 0x46, 0x2d]
+  for (let i = 0; i + marker.length <= head.length; i++) {
+    if (startsWith(marker, i)) return "application/pdf"
+  }
+  return null
 }

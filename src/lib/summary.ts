@@ -1,9 +1,17 @@
 /** Shared by the server code and the dashboard UI — nothing secret here. */
 
-// Kept under Next's 10MB proxy body buffer (proxyClientMaxBodySize). A larger
-// upload reaches the route handler cut off at 10MB, which is still over this
-// limit, so it is rejected instead of being summarized half-read.
-export const MAX_PDF_BYTES = 8 * 1024 * 1024
+// /api/summarize is left out of proxy.ts's matcher: the proxy buffers request
+// bodies and cuts them off at 10MB, which would truncate uploads this large.
+export const MAX_FILE_BYTES = 20 * 1024 * 1024
+
+// Pasted text. Roughly 25,000 words at the top end.
+export const MIN_TEXT_CHARS = 200
+export const MAX_TEXT_CHARS = 150_000
+
+export const FILE_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp"] as const
+
+export const DETAIL_LEVELS = ["short", "standard", "detailed"] as const
+export type DetailLevel = (typeof DETAIL_LEVELS)[number]
 
 // Per user, over a rolling 24 hours. The free Gemini tier gives the whole site
 // roughly 1,100 requests a day, so this keeps one account from using it all.

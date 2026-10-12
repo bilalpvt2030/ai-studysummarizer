@@ -12,8 +12,8 @@ export default function PrivacyPage() {
     <LegalPage title="Privacy Policy" updated="12 October 2026">
       <LegalSection title="The short version">
         <p>
-          {SITE_NAME} turns PDFs you upload into study notes. To do that it needs an account, it
-          sends your PDF to Google&apos;s Gemini AI service, and it saves the resulting summary so
+          {SITE_NAME} turns documents you upload into study notes. To do that it needs an account, it
+          sends your document to Google&apos;s Gemini AI service, and it saves the resulting summary so
           you can come back to it. It has no advertising and no tracking scripts.
         </p>
       </LegalSection>
@@ -27,9 +27,9 @@ export default function PrivacyPage() {
             are never visible to the site.
           </li>
           <li>
-            <strong>Documents you upload.</strong> The PDF is sent to Google&apos;s Gemini API to
-            write the summary. It is removed from Google&apos;s file storage as soon as the summary
-            comes back, and it is not stored by {SITE_NAME}.
+            <strong>Documents you upload.</strong> The file or pasted text is sent to Google&apos;s Gemini API to
+            write the summary. Uploaded files are removed from Google&apos;s file storage as soon as the summary
+            comes back, and the document itself is not stored by {SITE_NAME}.
           </li>
           <li>
             <strong>Your summaries.</strong> The summary text, its title and the name of the file
@@ -52,7 +52,7 @@ export default function PrivacyPage() {
       <LegalSection title="Who else handles your data">
         <ul>
           <li>
-            <strong>Google (Gemini API)</strong> processes each PDF you upload. This site uses the
+            <strong>Google (Gemini API)</strong> processes each document you submit. This site uses the
             free tier of that service, and Google&apos;s terms for the free tier allow Google to
             use submitted content to improve its products, which can include review by people.
             Do not upload documents that are confidential or contain sensitive personal

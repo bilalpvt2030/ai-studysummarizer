@@ -1,7 +1,8 @@
 import Link from "next/link"
 import { LegalPage, LegalSection } from "@/components/legal-page"
 import { SITE_NAME } from "@/lib/site"
-import { DAILY_SUMMARY_LIMIT } from "@/lib/summary"
+import { DAILY_SUMMARY_LIMIT, MAX_FILE_BYTES } from "@/lib/summary"
+import { formatBytes } from "@/lib/utils"
 
 export const metadata = {
   title: `Terms of Service · ${SITE_NAME}`,
@@ -43,8 +44,8 @@ export default function TermsPage() {
       <LegalSection title="Fair use">
         <ul>
           <li>
-            Each account can create up to {DAILY_SUMMARY_LIMIT} summaries per day, and PDFs can be
-            up to 8 MB. These limits may change.
+            Each account can create up to {DAILY_SUMMARY_LIMIT} summaries per day, and files can
+            be up to {formatBytes(MAX_FILE_BYTES, 0)}. These limits may change.
           </li>
           <li>
             Do not use automated tools to create accounts or summaries, or try to get around the
