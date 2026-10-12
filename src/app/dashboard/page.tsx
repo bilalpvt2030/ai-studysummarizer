@@ -2,6 +2,7 @@ import { redirect } from "next/navigation"
 import { Suspense } from "react"
 import { signOut } from "@/app/actions"
 import { getCurrentUser } from "@/lib/auth"
+import { getUsage, listSummaries } from "@/lib/summaries"
 import { Summarizer } from "./summarizer"
 
 export const metadata = {
@@ -22,7 +23,9 @@ export default function DashboardPage() {
           <Greeting />
         </Suspense>
 
-        <Summarizer />
+        <Suspense fallback={<SummarizerSkeleton />}>
+          <SummarizerSection />
+        </Suspense>
       </main>
     </div>
   )
@@ -95,6 +98,20 @@ async function Greeting() {
           {user.provider}
         </dd>
       </dl>
+    </div>
+  )
+}
+
+async function SummarizerSection() {
+  const [summaries, usage] = await Promise.all([listSummaries(), getUsage()])
+  return <Summarizer initialSummaries={summaries} initialUsage={usage} />
+}
+
+function SummarizerSkeleton() {
+  return (
+    <div className="mt-12 animate-pulse space-y-4">
+      <div className="h-6 w-40 rounded bg-zinc-200 dark:bg-zinc-800" />
+      <div className="h-36 rounded-xl bg-zinc-100 dark:bg-zinc-900" />
     </div>
   )
 }

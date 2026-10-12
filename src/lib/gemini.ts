@@ -1,17 +1,22 @@
-import type { StudySummary } from "./summary"
+import { toStudySummary, type StudySummary } from "./summary"
 
 const API_BASE = "https://generativelanguage.googleapis.com"
-// Tried in order, best first. The free tier allows only 20 requests a day per
-// model, and the newest model is also the one most often overloaded (503), so
-// the rest of the list is what keeps summaries working once it runs out.
+// Tried in order, best first. Free-tier quota is counted per model: the Flash
+// models allow 20 requests a day each, the two Flash-Lite models 500 each, so
+// the Lite models carry most of the daily volume once the Flash ones run out.
 const MODELS = [
   "gemini-3.8-flash",
   "gemini-3.7-flash",
   "gemini-3.6-flash",
   "gemini-3.5-flash",
+  "gemini-3-flash-preview",
   "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
 ]
+// A model that has used up its day is skipped for this long instead of being
+// asked again on every request. Per isolate, so it is only an optimisation.
+const QUOTA_COOLDOWN_MS = 30 * 60_000
+const quotaCooldown = new Map<string, number>()
 const TIMEOUT_MS = 100_000
 // A model that accepts the request and then goes silent would otherwise use up
 // the whole budget. The answer is streamed, so silence for this long (before
@@ -183,6 +188,11 @@ async function generateWithFallback(
   let outOfQuota = 0
 
   for (const model of models) {
+    if ((quotaCooldown.get(model) ?? 0) > Date.now()) {
+      outOfQuota++
+      skipped.push(`${model} out of quota (cached)`)
+      continue
+    }
     try {
       return await generateSummary(fileUri, model, apiKey, signal)
     } catch (e) {
@@ -192,7 +202,10 @@ async function generateWithFallback(
       const reason = e instanceof SummarizeError ? e.reason : undefined
       if (!stalled && reason !== "rate_limited" && reason !== "quota_exhausted") throw e
 
-      if (reason === "quota_exhausted") outOfQuota++
+      if (reason === "quota_exhausted") {
+        outOfQuota++
+        quotaCooldown.set(model, Date.now() + QUOTA_COOLDOWN_MS)
+      }
       const why = stalled ? "stalled" : reason === "quota_exhausted" ? "out of quota" : "busy"
       skipped.push(`${model} ${why}`)
       console.warn(`[gemini] ${model} ${why}, trying the next model`)
@@ -359,24 +372,4 @@ function retryAfterSeconds(body: string): number {
   const match = body.match(/retry in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?/i)
   if (!match) return 0
   return Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0)
-}
-
-/** The schema is enforced by Gemini, but don't let a malformed reply crash the UI. */
-function toStudySummary(value: unknown): StudySummary {
-  const source = (value && typeof value === "object" ? value : {}) as Record<string, unknown>
-  const text = (v: unknown) => (typeof v === "string" ? v.trim() : "")
-  const list = (v: unknown) => (Array.isArray(v) ? v : [])
-  const record = (v: unknown) => (v && typeof v === "object" ? v : {}) as Record<string, unknown>
-
-  return {
-    title: text(source.title) || "Untitled document",
-    overview: text(source.overview),
-    keyPoints: list(source.keyPoints).map(text).filter(Boolean),
-    keyTerms: list(source.keyTerms)
-      .map((item) => ({ term: text(record(item).term), definition: text(record(item).definition) }))
-      .filter((item) => item.term && item.definition),
-    questions: list(source.questions)
-      .map((item) => ({ question: text(record(item).question), answer: text(record(item).answer) }))
-      .filter((item) => item.question && item.answer),
-  }
 }
