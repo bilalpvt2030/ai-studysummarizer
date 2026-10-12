@@ -167,7 +167,7 @@ export function Summarizer() {
       )}
 
       <p aria-live="polite" className="mt-3 text-center text-xs text-zinc-500 dark:text-zinc-400">
-        {pending ? "Reading your PDF. Long documents can take up to a minute." : ""}
+        {pending ? "Reading your PDF. This usually takes under a minute, longer when the AI service is busy." : ""}
       </p>
 
       {summary && <SummaryView summary={summary} onReset={reset} />}

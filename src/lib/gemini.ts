@@ -1,8 +1,13 @@
 import type { StudySummary } from "./summary"
 
 const API_BASE = "https://generativelanguage.googleapis.com"
-const DEFAULT_MODEL = "gemini-3.8-flash"
-const TIMEOUT_MS = 90_000
+// Tried in order. The newest model is the one most often overloaded (503) or
+// out of free-tier quota (429, counted per model), so older ones back it up.
+const MODELS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
+const TIMEOUT_MS = 100_000
+// A model that accepts the request and then stalls would otherwise use up the
+// whole budget; give each one this long before moving to the next.
+const ATTEMPT_TIMEOUT_MS = 40_000
 
 export type SummarizeFailure =
   | "not_configured"
@@ -86,13 +91,14 @@ export async function summarizePdf(pdf: ArrayBuffer): Promise<StudySummary> {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) throw new SummarizeError("not_configured", "GEMINI_API_KEY is not set")
 
-  const model = process.env.GEMINI_MODEL || DEFAULT_MODEL
+  // GEMINI_MODEL, when set, is tried first; the defaults still back it up.
+  const models = [...new Set([process.env.GEMINI_MODEL, ...MODELS].filter(Boolean))] as string[]
   const signal = AbortSignal.timeout(TIMEOUT_MS)
 
   try {
     const file = await uploadPdf(pdf, apiKey, signal)
     try {
-      return await generateSummary(file.uri, model, apiKey, signal)
+      return await generateWithFallback(file.uri, models, apiKey, signal)
     } finally {
       // Google keeps uploads for 48 hours; the document isn't needed once
       // the summary is back, so don't leave it there.
@@ -100,11 +106,15 @@ export async function summarizePdf(pdf: ArrayBuffer): Promise<StudySummary> {
     }
   } catch (e) {
     if (e instanceof SummarizeError) throw e
-    if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) {
+    if (isTimeout(e)) {
       throw new SummarizeError("timeout", `No answer from Gemini within ${TIMEOUT_MS / 1000}s`)
     }
     throw new SummarizeError("failed", e instanceof Error ? e.message : String(e))
   }
+}
+
+function isTimeout(e: unknown): boolean {
+  return e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")
 }
 
 async function uploadPdf(pdf: ArrayBuffer, apiKey: string, signal: AbortSignal) {
@@ -152,6 +162,34 @@ type GenerateResponse = {
   }[]
 }
 
+async function generateWithFallback(
+  fileUri: string,
+  models: string[],
+  apiKey: string,
+  signal: AbortSignal
+): Promise<StudySummary> {
+  let busy: SummarizeError | undefined
+
+  for (const model of models) {
+    const attempt = AbortSignal.any([signal, AbortSignal.timeout(ATTEMPT_TIMEOUT_MS)])
+    try {
+      return await generateSummary(fileUri, model, apiKey, attempt)
+    } catch (e) {
+      // Only a busy or stalled model is worth swapping out; any other failure
+      // would repeat on the next one.
+      const stalled = isTimeout(e) && !signal.aborted
+      const unavailable = e instanceof SummarizeError && e.reason === "rate_limited"
+      if (!stalled && !unavailable) throw e
+
+      console.warn(`[gemini] ${model} ${stalled ? "stalled" : "unavailable"}, trying the next model`)
+      busy = unavailable
+        ? e
+        : new SummarizeError("rate_limited", `${model} gave no answer within ${ATTEMPT_TIMEOUT_MS / 1000}s`)
+    }
+  }
+  throw busy ?? new SummarizeError("failed", "No Gemini model configured")
+}
+
 async function generateSummary(
   fileUri: string,
   model: string,
@@ -159,7 +197,7 @@ async function generateSummary(
   signal: AbortSignal
 ): Promise<StudySummary> {
   const url = `${API_BASE}/v1beta/models/${model}:generateContent`
-  const init: RequestInit = {
+  const init = {
     method: "POST",
     headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -183,12 +221,7 @@ async function generateSummary(
     signal,
   }
 
-  // Gemini returns 503 during demand spikes; these usually clear within seconds.
-  let response = await fetch(url, init)
-  if (response.status === 503) {
-    await new Promise((resolve) => setTimeout(resolve, 2_000))
-    response = await fetch(url, init)
-  }
+  const response = await fetch(url, init)
   if (!response.ok) throw await apiError("generateContent", response)
 
   const data = (await response.json()) as GenerateResponse
