@@ -93,8 +93,33 @@ const RESPONSE_SCHEMA = {
         required: ["question", "answer"],
       },
     },
+    quiz: {
+      type: "ARRAY",
+      description:
+        "5 multiple-choice questions on the key points, different from the revision questions. Wrong options must be plausible and about the same length as the right one.",
+      items: {
+        type: "OBJECT",
+        properties: {
+          question: { type: "STRING" },
+          options: {
+            type: "ARRAY",
+            description: "Exactly 4 options, exactly one of them correct.",
+            items: { type: "STRING" },
+          },
+          answerIndex: {
+            type: "INTEGER",
+            description: "Position of the correct option in the options list, counting from 0.",
+          },
+          explanation: {
+            type: "STRING",
+            description: "One sentence on why the correct option is right.",
+          },
+        },
+        required: ["question", "options", "answerIndex", "explanation"],
+      },
+    },
   },
-  required: ["title", "overview", "keyPoints", "keyTerms", "questions"],
+  required: ["title", "overview", "keyPoints", "keyTerms", "questions", "quiz"],
 }
 
 /**

@@ -3,6 +3,12 @@
 import { Check, Copy } from "lucide-react"
 import { useState } from "react"
 import type { StudySummary } from "@/lib/summary"
+import { cn } from "@/lib/utils"
+import { Flashcards } from "./flashcards"
+import { Quiz } from "./quiz"
+
+const TABS = ["Summary", "Flashcards", "Quiz"] as const
+type Tab = (typeof TABS)[number]
 
 export function SummaryView({
   title,
@@ -14,6 +20,7 @@ export function SummaryView({
   children?: React.ReactNode
 }) {
   const [copied, setCopied] = useState(false)
+  const [tab, setTab] = useState<Tab>("Summary")
 
   async function copy() {
     try {
@@ -45,8 +52,48 @@ export function SummaryView({
         </button>
       </div>
 
+      <div
+        role="tablist"
+        aria-label="Study tools"
+        className="mt-6 flex gap-1 border-b border-zinc-200 dark:border-zinc-800"
+      >
+        {TABS.map((name) => (
+          <button
+            key={name}
+            type="button"
+            role="tab"
+            id={`tab-${name}`}
+            aria-selected={tab === name}
+            aria-controls={`panel-${name}`}
+            onClick={() => setTab(name)}
+            className={cn(
+              "-mb-px border-b-2 px-3 py-2 text-sm font-medium transition",
+              tab === name
+                ? "border-zinc-900 text-zinc-900 dark:border-zinc-50 dark:text-zinc-50"
+                : "border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
+            )}
+          >
+            {name}
+          </button>
+        ))}
+      </div>
+
+      <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+        {tab === "Flashcards" && <Flashcards summary={summary} />}
+        {tab === "Quiz" && <Quiz summary={summary} />}
+        {tab === "Summary" && <SummaryText summary={summary} />}
+      </div>
+
+      {children}
+    </article>
+  )
+}
+
+function SummaryText({ summary }: { summary: StudySummary }) {
+  return (
+    <>
       {summary.overview && (
-        <p className="mt-4 text-sm leading-7 text-zinc-700 dark:text-zinc-300">
+        <p className="mt-6 text-sm leading-7 text-zinc-700 dark:text-zinc-300">
           {summary.overview}
         </p>
       )}
@@ -94,9 +141,7 @@ export function SummaryView({
           </div>
         </>
       )}
-
-      {children}
-    </article>
+    </>
   )
 }
 

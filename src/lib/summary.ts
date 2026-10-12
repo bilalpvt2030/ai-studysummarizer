@@ -9,12 +9,21 @@ export const MAX_PDF_BYTES = 8 * 1024 * 1024
 // roughly 1,100 requests a day, so this keeps one account from using it all.
 export const DAILY_SUMMARY_LIMIT = 20
 
+export type QuizQuestion = {
+  question: string
+  options: string[]
+  answerIndex: number
+  explanation: string
+}
+
 export type StudySummary = {
   title: string
   overview: string
   keyPoints: string[]
   keyTerms: { term: string; definition: string }[]
   questions: { question: string; answer: string }[]
+  /** Multiple choice. Empty for summaries saved before quizzes existed. */
+  quiz: QuizQuestion[]
 }
 
 export type SavedSummary = {
@@ -52,5 +61,20 @@ export function toStudySummary(value: unknown): StudySummary {
     questions: list(source.questions)
       .map((item) => ({ question: text(record(item).question), answer: text(record(item).answer) }))
       .filter((item) => item.question && item.answer),
+    quiz: list(source.quiz)
+      .map((item) => ({
+        question: text(record(item).question),
+        options: list(record(item).options).map(text).filter(Boolean),
+        answerIndex: Number(record(item).answerIndex),
+        explanation: text(record(item).explanation),
+      }))
+      .filter(
+        (item) =>
+          item.question &&
+          item.options.length >= 2 &&
+          Number.isInteger(item.answerIndex) &&
+          item.answerIndex >= 0 &&
+          item.answerIndex < item.options.length
+      ),
   }
 }

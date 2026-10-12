@@ -264,7 +264,8 @@ export function Summarizer({
 
         <div ref={viewRef} className="scroll-mt-6">
           {active && (
-            <SummaryView title={active.title} summary={active.summary}>
+            // Keyed so the tab and quiz progress reset when another summary opens.
+            <SummaryView key={active.id ?? "unsaved"} title={active.title} summary={active.summary}>
               <button
                 type="button"
                 onClick={reset}
